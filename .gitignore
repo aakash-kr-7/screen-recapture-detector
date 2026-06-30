@@ -42,3 +42,8 @@ desktop.ini
 *.tmp
 tmp/
 scratch/
+
+# Project-specific overrides
+# Explicitly commit dataset and models directories
+!dataset/
+!models/
