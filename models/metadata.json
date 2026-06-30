@@ -1,0 +1,24 @@
+{
+    "feature_names": [
+        "freq_peak_to_average",
+        "freq_high_to_low_energy_ratio",
+        "color_saturation_mean",
+        "color_saturation_std",
+        "color_clipped_pixel_ratio",
+        "color_l_dynamic_range",
+        "color_cast_a",
+        "color_cast_b",
+        "texture_laplacian_var",
+        "texture_lbp_entropy",
+        "glare_blob_count",
+        "glare_avg_hardness",
+        "geom_aligned_line_count",
+        "geom_avg_line_len_rel"
+    ],
+    "chosen_threshold": 0.03186391108069255,
+    "logo_mean_accuracy": 0.7225907029478458,
+    "logo_std_accuracy": 0.23611051393270935,
+    "model_type": "GradientBoostingClassifier",
+    "training_date": "2026-06-30 22:45:16",
+    "total_image_count": 96
+}

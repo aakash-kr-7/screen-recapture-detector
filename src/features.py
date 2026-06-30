@@ -105,11 +105,19 @@ def _extract_texture_features(gray: np.ndarray) -> tuple[float, float]:
     """
     Extracts micro-texture statistics including Laplacian variance and LBP entropy.
     """
+    h, w = gray.shape
+    max_dim = 1024
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        gray_resized = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    else:
+        gray_resized = gray.copy()
+
     # Laplacian variance as a proxy for sharpness
-    lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    lap_var = float(cv2.Laplacian(gray_resized, cv2.CV_64F).var())
     
     # Local Binary Pattern (LBP) entropy for regular micro-textures (pixel/paper grids)
-    lbp = local_binary_pattern(gray, P=8, R=1, method='uniform')
+    lbp = local_binary_pattern(gray_resized, P=8, R=1, method='uniform')
     
     # Uniform LBP with P=8 produces at most 10 distinct values
     n_bins = 10
@@ -144,14 +152,28 @@ def _extract_glare_features(gray: np.ndarray) -> tuple[float, float]:
         area = stats[i, cv2.CC_STAT_AREA]
         # Filter for typical size of small specular reflections (e.g. 4 to 1000 pixels)
         if 4 <= area <= 1000:
-            blob_mask = (labels == i).astype(np.uint8)
+            left = stats[i, cv2.CC_STAT_LEFT]
+            top = stats[i, cv2.CC_STAT_TOP]
+            w_b = stats[i, cv2.CC_STAT_WIDTH]
+            h_b = stats[i, cv2.CC_STAT_HEIGHT]
+            
+            # Crop region with 1 pixel padding for dilation boundary
+            r_top = max(0, top - 1)
+            r_bottom = min(gray.shape[0], top + h_b + 1)
+            r_left = max(0, left - 1)
+            r_right = min(gray.shape[1], left + w_b + 1)
+            
+            cropped_labels = labels[r_top:r_bottom, r_left:r_right]
+            cropped_grad = grad_mag[r_top:r_bottom, r_left:r_right]
+            
+            blob_mask = (cropped_labels == i).astype(np.uint8)
             # Dilate mask and subtract original to get the boundary ring
             dilated = cv2.dilate(blob_mask, np.ones((3, 3), np.uint8))
             boundary = dilated - blob_mask
             
             if np.any(boundary > 0):
                 # Hardness is the average gradient magnitude along the boundary
-                hardness = float(np.mean(grad_mag[boundary > 0]))
+                hardness = float(np.mean(cropped_grad[boundary > 0]))
                 hardness_vals.append(hardness)
                 valid_count += 1
                 
