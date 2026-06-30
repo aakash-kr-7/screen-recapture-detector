@@ -165,15 +165,26 @@ def _extract_edge_features(gray: np.ndarray) -> tuple[float, float]:
     Finds straight axis-aligned lines as proxy indicators for screen frames or print edges.
     """
     h, w = gray.shape
-    diag = np.sqrt(h**2 + w**2)
+    max_dim = 1000
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        gray_resized = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    else:
+        gray_resized = gray.copy()
+        
+    h_r, w_r = gray_resized.shape
+    diag = np.sqrt(h_r**2 + w_r**2)
     
     # Run Canny edge detector
-    edges = cv2.Canny(gray, 50, 150)
+    edges = cv2.Canny(gray_resized, 50, 150)
     
-    # Minimum line length is defined relative to the image diagonal (10%)
-    min_line_len = int(0.10 * diag)
+    # Use optimized parameters for detecting long straight lines
+    # Thresh=40, MinLen=8% of diagonal, Gap=10
+    min_line_len = int(0.08 * diag)
     
-    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=50, 
+    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=40, 
                             minLineLength=min_line_len, maxLineGap=10)
     
     aligned_count = 0
