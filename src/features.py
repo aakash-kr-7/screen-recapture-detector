@@ -12,6 +12,13 @@ import numpy as np
 from PIL import Image
 from skimage.feature import local_binary_pattern
 
+import torch
+import torchvision.models as tv_models
+from torchvision.models import MobileNet_V3_Small_Weights
+
+# Global cache for the MobileNetV3-Small model
+_MOBILENET_MODEL = None
+
 # Parallel list of human-readable feature names for model interpretability and debugging.
 FEATURE_NAMES = [
     "freq_peak_to_average",
@@ -28,7 +35,7 @@ FEATURE_NAMES = [
     "glare_avg_hardness",
     "geom_aligned_line_count",
     "geom_avg_line_len_rel"
-]
+] + [f"mobilenet_emb_{i:03d}" for i in range(576)]
 
 
 def _extract_frequency_features(gray: np.ndarray) -> tuple[float, float]:
@@ -234,10 +241,48 @@ def _extract_edge_features(gray: np.ndarray) -> tuple[float, float]:
     return float(aligned_count), avg_len_ratio
 
 
+def _extract_mobilenet_embedding(img_rgb: np.ndarray) -> np.ndarray:
+    """
+    Extracts a 576-dimensional feature representation using a frozen MobileNetV3-Small model.
+    """
+    global _MOBILENET_MODEL
+    if _MOBILENET_MODEL is None:
+        # Note: Download weights on first run (~10MB)
+        weights = MobileNet_V3_Small_Weights.IMAGENET1K_V1
+        model = tv_models.mobilenet_v3_small(weights=weights)
+        model.eval()
+        model.to("cpu")
+        _MOBILENET_MODEL = model
+        
+    # Preprocess image correctly for MobileNet
+    # Resize to 224x224
+    img_resized = cv2.resize(img_rgb, (224, 224), interpolation=cv2.INTER_AREA)
+    # Convert to float32 and scale to [0.0, 1.0]
+    img_float = img_resized.astype(np.float32) / 255.0
+    # Normalize with ImageNet mean and std
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    img_normalized = (img_float - mean) / std
+    # Reorder channels from HWC to CHW
+    img_chw = np.transpose(img_normalized, (2, 0, 1))
+    
+    # Convert to tensor and add batch dimension
+    tensor = torch.from_numpy(img_chw).unsqueeze(0)
+    
+    with torch.no_grad():
+        # Pass through the features and avgpool (576 channels)
+        features = _MOBILENET_MODEL.features(tensor)
+        features = _MOBILENET_MODEL.avgpool(features)
+        features = torch.flatten(features, 1)
+        embedding = features.squeeze(0).cpu().numpy()
+        
+    return embedding
+
+
 def extract_features(image_path: str) -> np.ndarray:
     """
-    Loads an image from image_path, processes it using classical feature extraction,
-    and returns a 14-dimensional feature vector.
+    Loads an image from image_path, processes it using classical feature extraction
+    and MobileNetV3-Small embeddings, and returns a 590-dimensional feature vector.
     
     Raises a ValueError if the image is unreadable or corrupt.
     """
@@ -256,21 +301,26 @@ def extract_features(image_path: str) -> np.ndarray:
     except Exception as e:
         raise ValueError(f"Corrupt or unreadable image at '{image_path}': {str(e)}")
         
-    # Extract feature values from each group helper
+    # 1. Extract classical features (14-dim)
     f_freq1, f_freq2 = _extract_frequency_features(gray)
     f_col1, f_col2, f_col3, f_col4, f_col5, f_col6 = _extract_color_features(img_bgr)
     f_tex1, f_tex2 = _extract_texture_features(gray)
     f_glare1, f_glare2 = _extract_glare_features(gray)
     f_edge1, f_edge2 = _extract_edge_features(gray)
     
-    # Construct the final feature vector
-    features = np.array([
+    classical_features = np.array([
         f_freq1, f_freq2,
         f_col1, f_col2, f_col3, f_col4, f_col5, f_col6,
         f_tex1, f_tex2,
         f_glare1, f_glare2,
         f_edge1, f_edge2
     ], dtype=np.float32)
+    
+    # 2. Extract MobileNetV3 embeddings (576-dim)
+    mobilenet_features = _extract_mobilenet_embedding(img_rgb)
+    
+    # 3. Concatenate into a hybrid 590-dim feature vector
+    features = np.concatenate([classical_features, mobilenet_features])
     
     return features
 
@@ -288,8 +338,16 @@ if __name__ == "__main__":
         print("-" * 50)
         print(f"{'Feature Name':<30} | {'Value':<15}")
         print("-" * 50)
-        for name, val in zip(FEATURE_NAMES, feats):
+        
+        # Print classical features (first 14)
+        for name, val in zip(FEATURE_NAMES[:14], feats[:14]):
             print(f"{name:<30} | {val:<15.6f}")
+            
+        # Print first 10 MobileNet embedding values
+        for name, val in zip(FEATURE_NAMES[14:24], feats[14:24]):
+            print(f"{name:<30} | {val:<15.6f}")
+        print(f"{'(... 576 total embedding dims)':<30} | {'...':<15}")
+        
         print("-" * 50)
         print(f"Total features extracted: {len(feats)}")
     except Exception as exc:

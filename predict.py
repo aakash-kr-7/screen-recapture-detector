@@ -10,7 +10,7 @@ from src.features import extract_features
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python src/predict.py <path_to_image>")
+        print("Usage: python predict.py <path_to_image>")
         sys.exit(1)
         
     image_path = sys.argv[1]
@@ -19,7 +19,7 @@ def main():
         print(f"Error: Image path does not exist: '{image_path}'", file=sys.stderr)
         sys.exit(1)
         
-    # Load the trained model pipeline (looking for models/model.pkl in root)
+    # Load the trained model pipeline
     model_path = os.path.join("models", "model.pkl")
     if not os.path.exists(model_path):
         print(f"Error: Model file '{model_path}' not found. Please run training first.", file=sys.stderr)
