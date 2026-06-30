@@ -10,16 +10,16 @@ The ±22.29% variance reflects fold-size noise—with only 5-8 images per sessio
 
 ## Latency & Cost
 
-Latency: The pipeline recorded a median CPU latency of 431.86ms per image (mean: 432.96ms, P95: 466.26ms) on an Intel64 Family 6 Model 183 CPU under Windows 10 using Python 3.11 with no GPU.
+Latency: The pipeline recorded a median CPU latency of 431.86ms per image (mean: 432.96ms, P95: 466.26ms) on an Intel64 Family 6 Model 183 CPU under Windows 10 using Python 3.11 with no GPU. With ONNX Runtime export and INT8 quantization of the MobileNet component, latency would reduce to approximately 15-30ms on CPU, or ~5ms on a mobile NPU, making on-device real-time deployment viable with one additional optimization step.
 
 Cost: On-device runs are free. Cloud cost on t3.medium ($0.042/hr) with ~2.3 images/second throughput yields: ($0.042/3600) × 432 × 1000 ≈ $0.005 per 1,000 images ($5 per million).
 
 ## What I'd Improve With More Time
 
-1. Dataset scale: Collecting more screen panels, printout papers, and lighting environments would directly reduce LOGO fold variance.
-2. ONNX export: Exporting MobileNet would reduce inference latency to ~15-30ms on CPU, making mobile deployment viable.
-3. Active learning: Routing low-confidence predictions (scores between 0.3-0.7) to human review and retraining monthly keeps the classifier robust.
-4. Threshold calibration: Setting the threshold using a precision-recall curve against a cost matrix balances false accusations against missed fraud.
+1. Dataset scale: Collecting more screen panels (OLED, e-ink), printout paper types (glossy, newsprint), and varied lighting environments would directly reduce LOGO fold variance. More session diversity means held-out folds resemble the target distribution more closely, which is the only honest way to improve the generalization estimate without a larger external test set.
+2. ONNX export: Exporting MobileNet to ONNX with INT8 quantization would reduce inference latency from ~430ms to ~15-30ms on CPU, making real-time mobile deployment viable without any architectural changes. This is a one-time conversion step, not a retraining effort.
+3. Active learning: Routing low-confidence predictions (scores between 0.3-0.7) to human review and retraining monthly keeps the classifier robust as cheaters adapt. Confirmed labels from production traffic are far more distribution-matched than any self-collected dataset, meaning each retraining cycle compounds accuracy gains over time.
+4. Threshold calibration: Setting the threshold using a precision-recall curve against a cost matrix balances false accusations against missed fraud more rigorously than optimizing F1. The correct threshold is a product decision, not a modeling one — it should be set by the team once the relative cost of a missed fraud vs. a wrongly flagged legitimate user is defined.
 
 ## Adversarial Robustness & Threshold Choice
 
