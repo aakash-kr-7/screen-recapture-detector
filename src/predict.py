@@ -1,6 +1,10 @@
 """
-This script loads the trained model pipeline and runs prediction on a single target image.
-It prints the predicted probability of the image being a screen or printout recapture.
+This module implements the command-line interface (CLI) for running prediction on a single target image.
+
+CLI Contract:
+  Input:  path to an image file (jpg/jpeg/png) as the first command-line argument.
+  Output: prints a single float value between 0.0 and 1.0 to stdout (0.0 = real, 1.0 = screen/recapture), rounded to 4 decimal places.
+  Errors: printed directly to stderr, exiting with a non-zero exit code (1). No debug or help messages are written to stdout.
 """
 
 import os
@@ -40,11 +44,17 @@ def load_model_once():
         model_path = os.path.join(project_root, "models", "model.pkl")
         metadata_path = os.path.join(project_root, "models", "metadata.json")
         
+        # Verify model pipeline file path exists
         if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file '{model_path}' not found. Please run training first.")
+            raise FileNotFoundError(
+                f"Error: Model not found at '{model_path}'. Run src/train.py first to generate models/model.pkl"
+            )
         if not os.path.exists(metadata_path):
-            raise FileNotFoundError(f"Metadata file '{metadata_path}' not found. Please run training first.")
+            raise FileNotFoundError(
+                f"Error: Model metadata not found at '{metadata_path}'. Run src/train.py first to generate models/metadata.json"
+            )
             
+        # model.pkl contains the full Pipeline (StandardScaler -> PCA -> Classifier)
         _MODEL_PIPELINE = joblib.load(model_path)
         with open(metadata_path, 'r') as f:
             _MODEL_METADATA = json.load(f)
@@ -63,12 +73,15 @@ def predict_probability(image_path: str) -> float:
     load_model_once()
     
     if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Image file does not exist: '{image_path}'")
+        raise FileNotFoundError(f"Error: Image file does not exist: '{image_path}'")
         
-    # extract_features raises ValueError if unreadable/corrupt
-    feats = extract_features(image_path)
+    try:
+        # extract_features must return exactly 590 dimensions for the pipeline to accept it
+        feats = extract_features(image_path)
+    except Exception as e:
+        raise RuntimeError(f"Error: Feature extraction failed for '{image_path}': {str(e)}")
+        
     feats = feats.reshape(1, -1)
-    
     prob = _MODEL_PIPELINE.predict_proba(feats)[0, 1]
     return float(prob)
 
@@ -84,7 +97,7 @@ def main():
         # Print ONLY the probability value rounded to 4 decimal places on stdout
         print(f"{prob:.4f}")
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"{e}", file=sys.stderr)
         sys.exit(1)
 
 
