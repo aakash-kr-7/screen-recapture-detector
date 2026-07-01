@@ -91,7 +91,19 @@ Close-up texture photos (`r7_textures` like woven fabrics and fine wood grain) t
 
 ---
 
-## 6. What I'd Improve With More Time
+## 6. Extra Feature: Interactive Web UI (Highly Recommended!)
+
+To make testing the model simple and user-friendly, I engineered a self-contained local web dashboard in `app.py` utilizing Python's built-in standard library `http.server` (no external pip dependencies required). 
+
+Highly recommended to test:
+* **Drag-and-Drop Image Uploader**: Allows users to drag any image directly onto the browser screen or browse local directories.
+* **In-Memory Buffer Processing**: Image streams are parsed directly from memory as PIL objects (zero disk write overhead).
+* **Confidence Gauge & Labels**: A circular SVG progress bar animating green/red based on the recapture probability.
+* **Visual Diagnostic Metrics**: Displays real-time feature breakdowns explaining *why* the model made its decision, highlighting Moiré scores, focus variance CVs, saturation clipping ratios, halftone grid angular regularity variance, and paper L reflectance.
+
+---
+
+## 7. What I'd Improve With More Time
 
 * **Loop Vectorization (Numba / Cython)**: 
   Currently, the dominant computational latency (~800ms) is caused by Python-level loops in `_extract_dct_block_artifacts` that iterate over row/column indices to measure boundary gradient alignment. Compiling these loops with **Numba** or rewriting them in vectorized numpy block slicing operations would reduce latency from **~920ms to <30ms** on CPU.

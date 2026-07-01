@@ -32,6 +32,14 @@ To run the computational latency benchmark:
 python src/benchmark.py
 ```
 
+### 5. Interactive Web UI (Highly Recommended!)
+To launch the interactive web dashboard for uploading custom images and viewing detailed diagnostics:
+```bash
+python app.py
+```
+Open your browser and navigate to: `http://localhost:8501`. 
+*Note: This clean, glassmorphic UI dashboard was built by **aakash** and parses upload buffers directly in memory (zero-disk overhead).*
+
 ---
 
 ## Image Preprocessing Details
@@ -49,6 +57,7 @@ To ensure consistency across diverse camera sensors, aspect ratios, and resoluti
 ```text
 spot-the-fake-photo/
 ├── predict.py          # Command-line entrypoint for single-image inference
+├── app.py              # Interactive Web UI dashboard (starts local server at port 8501)
 ├── requirements.txt    # Python library dependencies
 ├── NOTE.md             # Engineering write-up: Dataset, rationale, metrics, challenges, cost
 ├── README.md           # Project guide, quickstart, preprocessing rules
