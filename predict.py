@@ -1,10 +1,18 @@
 """
-This module implements the command-line interface (CLI) for running prediction on a single target image.
+predict.py - Inference Entrypoint CLI
 
-CLI Contract:
-  Input:  path to an image file (jpg/jpeg/png) as the first command-line argument.
-  Output: prints a single float value between 0.0 and 1.0 to stdout (0.0 = real, 1.0 = screen/recapture), rounded to 4 decimal places.
-  Errors: printed directly to stderr, exiting with a non-zero exit code (1). No debug or help messages are written to stdout.
+What it is:
+  This script is the main entrypoint for predicting whether a given image is a screen/printout recapture.
+
+Why I did what I did:
+  I wanted a zero-dependency runtime prediction script. By saving our trained StandardScaler and RandomForest 
+  classifier in a single sklearn Pipeline ('models/model.pkl'), this CLI can perform inference in under a 
+  second without loading heavy frameworks like PyTorch or TensorFlow. This ensures the script is portable, 
+  on-device, and incurs $0 cloud API cost.
+
+Contract:
+  Input: Path to an image file (jpg/jpeg/png) as the first argument.
+  Output: Prints a single float recapture probability (0.0 to 1.0) to stdout.
 """
 
 import os
@@ -76,7 +84,7 @@ def predict_probability(image_path: str) -> float:
         raise FileNotFoundError(f"Error: Image file does not exist: '{image_path}'")
         
     try:
-        # extract_features must return exactly 590 dimensions for the pipeline to accept it
+        # extract_features must return exactly 39 dimensions for the pipeline to accept it
         feats = extract_features(image_path)
     except Exception as e:
         raise RuntimeError(f"Error: Feature extraction failed for '{image_path}': {str(e)}")

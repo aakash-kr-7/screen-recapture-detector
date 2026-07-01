@@ -1,14 +1,20 @@
 """
-This module performs hand-engineered classical feature extraction on images for screen recapture detection.
-It computes a 32-dimensional feature vector consisting of classical computer vision features across 7 distinct groups:
-1. Per-Channel FFT Periodicity (6 features)
-2. DCT Block Artifact Detection (4 features)
-3. Local Sharpness Uniformity (5 features)
-4. Lighting-Invariant Color Statistics (6 features)
-5. Noise Analysis (4 features)
-6. Texture and LBP (3 features)
-7. Edge and Geometry (4 features)
-All deep learning dependencies (PyTorch/MobileNet) have been entirely removed.
+src/features.py - Classical Feature Extraction Module
+
+What it is:
+  This module implements the feature extraction engine for our detector. It processes an input image 
+  and returns a 39-dimensional float32 vector representing 8 distinct classical image processing groups.
+
+Why I did what I did:
+  I replaced the heavy neural network embeddings (MobileNet) completely with classical image processing 
+  techniques. Recaptures display distinct physical cues (Moiré, double JPEG compression boundary gaps, 
+  specular reflection, and halftone print grids) that can be modeled directly using 2D Fast Fourier 
+  Transforms, Discrete Cosine Transforms, color space analyses, LBP textures, and Hough lines.
+  
+  This classical engineering approach has three key benefits:
+  1. No black-box dependencies or neural model files to ship.
+  2. The features map to explainable physical concepts, making debugging failure modes straightforward.
+  3. Extremely lightweight CPU footprints that run on standard on-device platforms without a GPU.
 """
 
 import os
@@ -18,7 +24,7 @@ import numpy as np
 from PIL import Image
 from skimage.feature import local_binary_pattern
 
-# Parallel list of exactly 32 strings matching the feature vector output
+# Parallel list of exactly 39 strings matching the feature vector output
 FEATURE_NAMES = [
     # GROUP 1: PER-CHANNEL FFT PERIODICITY
     "freq_r_hf_ratio",
@@ -33,6 +39,7 @@ FEATURE_NAMES = [
     "dct_v_boundary_ratio",
     "dct_periodicity_score",
     "dct_block_mean_variance",
+    "dct_gradient_direction_change",
     
     # GROUP 3: LOCAL SHARPNESS UNIFORMITY
     "sharp_mean_sharpness",
@@ -48,6 +55,7 @@ FEATURE_NAMES = [
     "color_sat_skewness",
     "color_luminance_spatial_std",
     "color_clipped_highlight_ratio",
+    "color_sat_spatial_uniformity",
     
     # GROUP 5: NOISE ANALYSIS
     "noise_energy",
@@ -64,7 +72,14 @@ FEATURE_NAMES = [
     "geom_aligned_line_count",
     "geom_avg_line_len_rel",
     "geom_edge_density",
-    "geom_edge_orientation_entropy"
+    "geom_edge_orientation_entropy",
+    
+    # GROUP 8: PRINTOUT DETECTION
+    "print_halftone_mid_freq_ratio",
+    "print_halftone_angular_regularity",
+    "print_paper_mean_L",
+    "print_paper_dark_ratio",
+    "print_paper_noise_spatial_freq_peak"
 ]
 
 
@@ -162,10 +177,12 @@ def _extract_dct_block_artifacts(img_rgb: np.ndarray) -> list[float]:
         Recaptured photos exhibit periodic gradient spikes at 8-pixel intervals horizontally 
         and vertically from the double JPEG block grids, and higher energy in corresponding 
         2D DFT frequencies. Block means also show lower spatial variance compared to real photos 
-        with natural high frequency/complex spatial content.
+        with natural high frequency/complex spatial content. Furthermore, double compression 
+        artifacts create angular discontinuities at boundaries that natural textures do not have.
         
     Return Values:
-        [h_boundary_ratio, v_boundary_ratio, dct_periodicity_score, block_mean_variance]
+        [h_boundary_ratio, v_boundary_ratio, dct_periodicity_score, block_mean_variance, 
+         dct_gradient_direction_change]
     """
     # Convert to grayscale without resizing to keep pixel-aligned block grid intact
     gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
@@ -228,7 +245,49 @@ def _extract_dct_block_artifacts(img_rgb: np.ndarray) -> list[float]:
     else:
         block_mean_variance = 0.0
         
-    return [h_boundary_ratio, v_boundary_ratio, dct_periodicity_score, block_mean_variance]
+    # 5. Gradient direction change across 8x8 block boundaries
+    sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3) # 3: Sobel kernel size
+    sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    
+    # Horizontal boundaries
+    h_boundaries = [y_b for y_b in range(8, h - 8) if y_b % 8 == 0] # 8: block boundary spacing
+    h_diffs = []
+    for y_b in h_boundaries:
+        mean_dx_above = np.mean(sobel_x[y_b - 2 : y_b, :]) # 2: 2 rows above boundary
+        mean_dy_above = np.mean(sobel_y[y_b - 2 : y_b, :])
+        mean_dx_below = np.mean(sobel_x[y_b : y_b + 2, :]) # 2: 2 rows below boundary
+        mean_dy_below = np.mean(sobel_y[y_b : y_b + 2, :])
+        
+        angle_above = np.arctan2(mean_dy_above, mean_dx_above)
+        angle_below = np.arctan2(mean_dy_below, mean_dx_below)
+        
+        diff = np.abs(angle_above - angle_below)
+        if diff > np.pi: # pi: wrap-around logic for angular difference
+            diff = 2.0 * np.pi - diff
+        h_diffs.append(diff)
+    avg_h_diff = np.mean(h_diffs) if h_diffs else 0.0
+    
+    # Vertical boundaries
+    v_boundaries = [x_b for x_b in range(8, w - 8) if x_b % 8 == 0] # 8: block boundary spacing
+    v_diffs = []
+    for x_b in v_boundaries:
+        mean_dx_left = np.mean(sobel_x[:, x_b - 2 : x_b]) # 2: 2 columns left of boundary
+        mean_dy_left = np.mean(sobel_y[:, x_b - 2 : x_b])
+        mean_dx_right = np.mean(sobel_x[:, x_b : x_b + 2]) # 2: 2 columns right of boundary
+        mean_dy_right = np.mean(sobel_y[:, x_b : x_b + 2])
+        
+        angle_left = np.arctan2(mean_dy_left, mean_dx_left)
+        angle_right = np.arctan2(mean_dy_right, mean_dx_right)
+        
+        diff = np.abs(angle_left - angle_right)
+        if diff > np.pi: # pi: wrap-around logic for angular difference
+            diff = 2.0 * np.pi - diff
+        v_diffs.append(diff)
+    avg_v_diff = np.mean(v_diffs) if v_diffs else 0.0
+    
+    dct_gradient_direction_change = float((avg_h_diff + avg_v_diff) / 2.0) # 2.0: average horizontal & vertical components
+        
+    return [h_boundary_ratio, v_boundary_ratio, dct_periodicity_score, block_mean_variance, dct_gradient_direction_change]
 
 
 def _extract_sharpness_uniformity(img_rgb: np.ndarray) -> list[float]:
@@ -311,11 +370,12 @@ def _extract_color_statistics(img_rgb: np.ndarray) -> list[float]:
         Screens show lower spatial variance in chromaticity (a and b channels) compared 
         to real scenes that have complex lighting/shadows. Screens also clip saturation 
         levels (sat > 220) and highlights (L > 250) more aggressively, and show right-skewed 
-        saturation distributions from vivid graphics.
+        saturation distributions from vivid graphics. Saturation is also spatially 
+        non-uniform compared to bright real objects like windows/sky or paper printouts.
         
     Return Values:
         [b_channel_spatial_std, a_channel_spatial_std, sat_clipping_ratio, sat_skewness, 
-         luminance_spatial_std, clipped_highlight_ratio]
+         luminance_spatial_std, clipped_highlight_ratio, sat_spatial_uniformity]
     """
     H, W = img_rgb.shape[:2]
     patch_h = H // 3 # 3: grid rows
@@ -351,10 +411,12 @@ def _extract_color_statistics(img_rgb: np.ndarray) -> list[float]:
     hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
     sat = hsv[:, :, 1]
     
-    # sat_clipping_ratio (fraction of pixels with saturation > 220)
-    sat_clipping_ratio = float(np.mean(sat > 220)) # 220: standard saturation clipping threshold for screens
+    # 3. Saturation clipping statistics (exclude near-white/bright highlights and dark regions)
+    L_full = lab[:, :, 0]
+    # sat_clipping_ratio: saturation > 220 AND luminance L between 40 and 230
+    sat_clipping_ratio = float(np.mean((sat > 220) & (L_full >= 40) & (L_full <= 230))) # 220: sat clip threshold, 40/230: luminance bounds
     
-    # Compute saturation histogram with 8 bins
+    # Compute saturation histogram with 8 bins (placeholder/unused in return but kept for consistency)
     _ = np.histogram(sat, bins=8, range=(0, 256)) # 8: number of bins, 256: 8-bit scale
     
     # sat_skewness: Skewness of saturation distribution
@@ -366,12 +428,23 @@ def _extract_color_statistics(img_rgb: np.ndarray) -> list[float]:
     else:
         sat_skewness = float(np.mean((sat_flat - mean_sat) ** 3) / (std_sat ** 3 + 1e-8)) # 1e-8: epsilon for stability
         
-    # 3. Highlight clipping statistics (fraction of pixels with L > 250 in Lab space)
-    L_full = lab[:, :, 0]
+    # Highlight clipping statistics (fraction of pixels with L > 250 in Lab space)
     clipped_highlight_ratio = float(np.mean(L_full > 250)) # 250: highlight clipping limit close to peak brightness (255)
     
+    # 4. Saturation spatial uniformity (coefficient of variation of patch saturation mean values)
+    sat_patch_means = []
+    # Crop sat to multiple of 3
+    sat_cropped = sat[:patch_h * 3, :patch_w * 3]
+    for r in range(3): # 3: rows
+        for c in range(3): # 3: cols
+            p_sat = sat_cropped[r * patch_h : (r + 1) * patch_h, c * patch_w : (c + 1) * patch_w]
+            sat_patch_means.append(np.mean(p_sat))
+    mean_sat_patches = np.mean(sat_patch_means)
+    std_sat_patches = np.std(sat_patch_means)
+    sat_spatial_uniformity = float(std_sat_patches / (mean_sat_patches + 1e-8)) # 1e-8: epsilon for stability
+    
     return [b_channel_spatial_std, a_channel_spatial_std, sat_clipping_ratio, sat_skewness, 
-            luminance_spatial_std, clipped_highlight_ratio]
+            luminance_spatial_std, clipped_highlight_ratio, sat_spatial_uniformity]
 
 
 def _extract_noise_features(img_rgb: np.ndarray) -> list[float]:
@@ -592,37 +665,152 @@ def _extract_geometry_features(img_rgb: np.ndarray) -> list[float]:
     return [geom_aligned_line_count, geom_avg_line_len_rel, edge_density, edge_orientation_entropy]
 
 
+def _extract_printout_features(img_rgb: np.ndarray) -> list[float]:
+    """
+    Detects physical artifacts specific to printed paper: halftone dot patterns 
+    from inkjet/laser printing, paper grain in noise residual, reflective (not 
+    emissive) luminance profile, and ink color gamut characteristics.
+    
+    Physical Signal:
+        Printed images have high reflectance, narrow luminance ranges, fine-grained 
+        halftone distributions, and structured dot frequency orientations.
+        
+    Discriminative Power:
+        Distinguishes printed recaptures (s7_printout) from emissive screens and 
+        real 3D photos. Printouts have a characteristic halftone FFT ratio, angular 
+        regularity of dots (often at 45/75 degree angles), high paper mean L, 
+        and low dark pixel counts.
+        
+    Return Values:
+        [print_halftone_mid_freq_ratio, print_halftone_angular_regularity, 
+         print_paper_mean_L, print_paper_dark_ratio, print_paper_noise_spatial_freq_peak]
+    """
+    # 1. Halftone FFT features
+    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+    gray_512 = cv2.resize(gray, (512, 512), interpolation=cv2.INTER_AREA) # 512: standardized size for FFT
+    f = np.fft.fft2(gray_512)
+    fshift = np.fft.fftshift(f)
+    mag = np.abs(fshift)
+    
+    y, x = np.ogrid[:512, :512]
+    r = np.sqrt((y - 256)**2 + (x - 256)**2) # 256: shifted center
+    
+    # Mid-high frequency annulus for halftones: radius 30-80
+    mid_high_mask = (r >= 30) & (r <= 80) # 30 to 80: halftone frequency range
+    annulus_energy = np.sum(mag[mid_high_mask])
+    total_energy = np.sum(mag)
+    halftone_mid_freq_ratio = float(annulus_energy / (total_energy + 1e-8)) # 1e-8: epsilon for stability
+    
+    # Halftone angular regularity: find top 10 peaks in the annulus, excluding horizontal/vertical axes by 20 degrees
+    dy = y - 256
+    dx = x - 256
+    angles_full = np.abs(np.arctan2(dy, dx) * 180.0 / np.pi)
+    angles_mod_90 = angles_full % 90.0
+    non_axis_mask = (angles_mod_90 >= 20.0) & (angles_mod_90 <= 70.0) # 20.0 to 70.0: exclude 20 degrees near 0/90 axes
+    
+    valid_mask = mid_high_mask & non_axis_mask
+    high_indices = np.argwhere(valid_mask)
+    vals = mag[valid_mask]
+    
+    if len(vals) >= 10: # 10: number of peaks to track
+        top10_idx = np.argsort(vals)[-10:][::-1]
+        top10_coords = high_indices[top10_idx]
+        angles = np.array([np.arctan2(p[0] - 256, p[1] - 256) for p in top10_coords]) # 256: shift center
+        
+        # Avoid symmetry cancellation by mapping to [0, pi) and doubling angles
+        angles_mod = angles % np.pi
+        angles_double = 2.0 * angles_mod
+        
+        sum_cos = np.sum(np.cos(angles_double))
+        sum_sin = np.sum(np.sin(angles_double))
+        R = np.sqrt(sum_cos**2 + sum_sin**2) / 10.0 # 10.0: sample size normalization
+        halftone_angular_regularity = float(1.0 - R)
+    else:
+        halftone_angular_regularity = 1.0 # default fallback
+        
+    # 2. Paper luminance profile
+    lab = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2Lab)
+    L_channel = lab[:, :, 0]
+    paper_mean_L = float(np.mean(L_channel))
+    paper_dark_ratio = float(np.mean(L_channel < 30)) # 30: threshold for dark paper shadow pixels
+    
+    # 3. Paper noise texture (dominant frequency in noise residual FFT)
+    h, w = img_rgb.shape[:2]
+    max_dim = 512 # 512: standardized scale for sensor noise analysis
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        img_resized = cv2.resize(img_rgb, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    else:
+        img_resized = img_rgb.copy()
+        
+    gray_resized = cv2.cvtColor(img_resized, cv2.COLOR_RGB2GRAY)
+    gray_double = gray_resized.astype(np.float64)
+    blurred = cv2.GaussianBlur(gray_double, (3, 3), 1.0) # 3: kernel size, 1.0: Gaussian sigma
+    residual = gray_double - blurred
+    
+    res_512 = cv2.resize(residual, (512, 512), interpolation=cv2.INTER_AREA) # 512: normalize grid for FFT
+    f_res = np.fft.fft2(res_512)
+    fshift_res = np.fft.fftshift(f_res)
+    mag_res = np.abs(fshift_res)
+    
+    y_r, x_r = np.ogrid[:512, :512]
+    r_res = np.sqrt((y_r - 256)**2 + (x_r - 256)**2) # 256: shift center
+    mask_res = r_res >= 5 # 5: exclude DC and low-frequency components
+    
+    valid_indices = np.argwhere(mask_res)
+    vals_res = mag_res[mask_res]
+    if len(vals_res) > 0:
+        max_idx = np.argmax(vals_res)
+        y_max, x_max = valid_indices[max_idx]
+        dom_freq = np.sqrt((y_max - 256)**2 + (x_max - 256)**2) # 256: center shift
+        paper_noise_spatial_freq_peak = float(dom_freq / 512.0) # 512.0: normalize by image size
+    else:
+        paper_noise_spatial_freq_peak = 0.0
+        
+    return [halftone_mid_freq_ratio, halftone_angular_regularity, paper_mean_L, paper_dark_ratio, paper_noise_spatial_freq_peak]
+
+
 # =====================================================================
 # PUBLIC INTERFACE
 # =====================================================================
 
-def extract_features(image_path: str) -> np.ndarray:
+def extract_features(image_path) -> np.ndarray:
     """
-    Loads an image from image_path, processes it using 7 classical image processing groups,
-    and returns a 32-dimensional flat float32 feature vector.
+    Loads an image from image_path (or accepts a PIL Image / numpy array directly),
+    processes it using 8 classical image processing groups, and returns a 39-dimensional 
+    flat float32 feature vector.
     
-    Raises a ValueError if the image is unreadable or corrupt, specifying the image_path.
+    Raises a ValueError if the image is unreadable or corrupt.
     """
-    if not os.path.exists(image_path):
-        raise ValueError(f"Image path does not exist: '{image_path}'")
-        
-    try:
-        # Load image via PIL to support a wide range of formats robustly
-        with Image.open(image_path) as pil_img:
-            if pil_img.mode != "RGB":
-                pil_img = pil_img.convert("RGB")
-            img_rgb = np.array(pil_img)
-    except Exception as e:
-        raise ValueError(f"Corrupt or unreadable image at '{image_path}': {str(e)}")
+    if isinstance(image_path, str):
+        if not os.path.exists(image_path):
+            raise ValueError(f"Image path does not exist: '{image_path}'")
+            
+        try:
+            # Load image via PIL to support a wide range of formats robustly
+            with Image.open(image_path) as pil_img:
+                if pil_img.mode != "RGB":
+                    pil_img = pil_img.convert("RGB")
+                img_rgb = np.array(pil_img)
+        except Exception as e:
+            raise ValueError(f"Corrupt or unreadable image at '{image_path}': {str(e)}")
+    elif isinstance(image_path, Image.Image):
+        if image_path.mode != "RGB":
+            image_path = image_path.convert("RGB")
+        img_rgb = np.array(image_path)
+    elif isinstance(image_path, np.ndarray):
+        img_rgb = image_path.copy()
+    else:
+        raise ValueError(f"Invalid input type: {type(image_path)}")
         
     try:
         # 1. Per-Channel FFT Periodicity (6 features)
         g1 = _extract_per_channel_fft(img_rgb)
-        # 2. DCT Block Artifact Detection (4 features)
+        # 2. DCT Block Artifact Detection (5 features)
         g2 = _extract_dct_block_artifacts(img_rgb)
         # 3. Local Sharpness Uniformity (5 features)
         g3 = _extract_sharpness_uniformity(img_rgb)
-        # 4. Lighting-Invariant Color Statistics (6 features)
+        # 4. Lighting-Invariant Color Statistics (7 features)
         g4 = _extract_color_statistics(img_rgb)
         # 5. Noise Analysis (4 features)
         g5 = _extract_noise_features(img_rgb)
@@ -630,13 +818,15 @@ def extract_features(image_path: str) -> np.ndarray:
         g6 = _extract_texture_features(img_rgb)
         # 7. Edge and Geometry (4 features)
         g7 = _extract_geometry_features(img_rgb)
+        # 8. Printout Detection (5 features)
+        g8 = _extract_printout_features(img_rgb)
         
-        # Concatenate all groups (6 + 4 + 5 + 6 + 4 + 3 + 4 = 32 features)
-        features = np.concatenate([g1, g2, g3, g4, g5, g6, g7]).astype(np.float32)
+        # Concatenate all groups (6 + 5 + 5 + 7 + 4 + 3 + 4 + 5 = 39 features)
+        features = np.concatenate([g1, g2, g3, g4, g5, g6, g7, g8]).astype(np.float32)
         
         return features
     except Exception as e:
-        raise ValueError(f"Failed to extract features for image '{image_path}': {str(e)}")
+        raise ValueError(f"Failed to extract features: {str(e)}")
 
 
 # =====================================================================

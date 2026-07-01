@@ -1,14 +1,14 @@
 """
-This script benchmarks the inference latency of the hybrid feature extraction and classification pipeline.
-It measures the execution time of the core `predict_probability` function directly on a sample of 20
-images (10 real, 10 screen recaptures) from the dataset.
+src/benchmark.py - Latency Benchmarking Utility
 
-Inference latency excludes subprocess spawning overhead to measure the actual computational cost of the
-feature extraction and classifier pipeline on CPU. It reports mean, median, and 95th percentile (P95) latency
-along with system hardware diagnostics.
+What it is:
+  This script benchmarks the CPU inference latency of the feature extraction and classification pipeline.
+  It measures execution times of `predict_probability` on a sample of 20 images from the dataset.
 
-To run the latency benchmark, execute:
-    python src/benchmark.py
+Why I did what I did:
+  I wrote this script to isolate CPU computation time from command-line startup overhead. By running 
+  warm-up cycles and loading files directly in Python, we measure the true latency of the classical 
+  feature extraction (FFT, Sobel, LBP, and Canny) and Random Forest prediction.
 """
 
 import os
@@ -76,7 +76,7 @@ def main():
         
     print(f"Benchmarking inference latency on {len(image_paths)} images...")
     
-    # Warmup predict_probability (loads model, caches MobileNet model)
+    # Warmup predict_probability (loads model and runs initial feature extraction)
     print("Warming up model weights and feature extraction...")
     try:
         _ = predict_probability(image_paths[0])
@@ -105,15 +105,16 @@ def main():
     p95_lat = np.percentile(latencies, 95)
     
     # Printed output ends with a clearly labeled summary block matching the format specifications
-    print("\n── Benchmark Summary ─────────────────────────────")
+    print("\n" + "=" * 50)
+    print("BENCHMARK SUMMARY")
+    print("=" * 50)
     print(f"Images tested : {len(latencies)}")
     print(f"Mean latency  : {mean_lat:.2f} ms")
     print(f"Median latency: {median_lat:.2f} ms")
     print(f"P95 latency   : {p95_lat:.2f} ms")
     print(f"Hardware      : {platform.processor()}, {platform.system()} {platform.release()}")
-    print("Note: Dominant cost is MobileNet CPU inference. ONNX + INT8")
-    print("      quantization would reduce this to ~15-30ms.")
-    print("──────────────────────────────────────────────────")
+    print("Note: Dominant cost is classical feature extraction (FFT, Sobel, Canny).")
+    print("=" * 50)
 
 
 if __name__ == "__main__":
