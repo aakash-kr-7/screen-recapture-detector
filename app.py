@@ -11,7 +11,7 @@ from PIL import Image
 # Ensure project root is in sys.path
 sys.path.append(os.getcwd())
 
-from predict import predict_probability, load_model_once, _MODEL_PIPELINE, _MODEL_METADATA
+import predict
 from src.features import extract_features, FEATURE_NAMES
 
 PORT = 8501
@@ -496,9 +496,9 @@ class WebUIHandler(BaseHTTPRequestHandler):
                             pil_img = pil_img.convert("RGB")
                         
                         # 1. Run prediction
-                        load_model_once()
+                        predict.load_model_once()
                         feats = extract_features(pil_img)
-                        prob = float(_MODEL_PIPELINE.predict_proba(feats.reshape(1, -1))[0, 1])
+                        prob = float(predict._MODEL_PIPELINE.predict_proba(feats.reshape(1, -1))[0, 1])
                         
                         # 2. Extract specific features for diagnostics
                         # We map features from FEATURE_NAMES
@@ -525,31 +525,31 @@ class WebUIHandler(BaseHTTPRequestHandler):
                                 "name": "Moiré Patterns",
                                 "value": f"{moire_score*100:.1f}%",
                                 "desc": "Measures correlated peak frequencies across channels from display grids.",
-                                "alert": moire_score > 0.4
+                                "alert": bool(moire_score > 0.4)
                             },
                             {
                                 "name": "Sharpness Variance",
                                 "value": f"{sharpness_cv:.3f}",
                                 "desc": "Uniform focus indicates flat display; natural 3D depth varies.",
-                                "alert": sharpness_cv < 0.65
+                                "alert": bool(sharpness_cv < 0.65)
                             },
                             {
                                 "name": "Saturation Gating",
                                 "value": f"{sat_clip*100:.3f}%",
                                 "desc": "Display panels exhibit boosted saturation clipping at mid-tones.",
-                                "alert": sat_clip > 0.001
+                                "alert": bool(sat_clip > 0.001)
                             },
                             {
                                 "name": "Halftone Regularity",
                                 "value": f"{1.0 - halftone_regularity:.4f}",
                                 "desc": "Reflective printing dots produce highly regular angled FFT peaks.",
-                                "alert": halftone_regularity < 0.05
+                                "alert": bool(halftone_regularity < 0.05)
                             },
                             {
                                 "name": "Paper Reflectance (L)",
                                 "value": f"{paper_L:.1f}",
                                 "desc": "Printed white paper reflects significantly more ambient light.",
-                                "alert": paper_L > 125.0
+                                "alert": bool(paper_L > 125.0)
                             }
                         ]
                         
